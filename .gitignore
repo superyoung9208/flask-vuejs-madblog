@@ -1,6 +1,13 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+.idea
+logs/log*
+app.db
+venv/
+.env
+app.db
+madblog.log*
 *$py.class
 
 # C extensions
