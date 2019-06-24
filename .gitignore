@@ -12,6 +12,7 @@ madblog.log*
 
 # C extensions
 *.so
+/hello
 
 # Distribution / packaging
 .Python
