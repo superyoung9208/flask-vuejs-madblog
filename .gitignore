@@ -1,0 +1,7 @@
+.idea/
+__pycache__/
+venv/
+.env
+app.db
+madblog.log*
+../.idea/
