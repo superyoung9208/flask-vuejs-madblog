@@ -19,7 +19,8 @@ export default {
       const path = 'http://localhost:5000/api/ping'
       axios.get(path)
         .then((res) => {
-          this.msg = res.data;
+          console.log(res)
+          this.msg = res.data['message'];
         })
         .catch((error) => {
           // eslint-disable-next-line
