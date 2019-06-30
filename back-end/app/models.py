@@ -1,6 +1,11 @@
 import base64
 import os
+from _md5 import md5
+
 from datetime import datetime, timedelta
+
+import jwt
+from flask import current_app
 from flask import url_for
 
 from . import db
@@ -41,9 +46,12 @@ class User(PaginatedAPIMixin,db.Model):
     username = db.Column(db.String(64), index=True, unique=True)
     email = db.Column(db.String(120), index=True, unique=True)
     password_hash = db.Column(db.String(128))  # 不保存原始密码
+    name = db.Column(db.String(64))
+    location = db.Column(db.String(64))
+    about_me = db.Column(db.Text())
+    member_since = db.Column(db.DateTime(), default=datetime.utcnow)
+    last_seen = db.Column(db.DateTime(), default=datetime.utcnow)
 
-    token = db.Column(db.String(32),index=True,unique=True)
-    token_expiration = db.Column(db.DateTime)
 
     def __repr__(self):
         return '<User {}>'.format(self.username)
@@ -69,8 +77,13 @@ class User(PaginatedAPIMixin,db.Model):
             'id':self.id,
             'username':self.username,
             'email':self.email,
+            'name':self.name,
+            'location':self.location,
+            'member_since': self.member_since.isoformat() + 'Z',
+            'last_seen': self.last_seen.isoformat() + 'Z',
             '_links':{
-                'self':url_for('api.get_user',id=self.id)
+                'self':url_for('api.get_user',id=self.id),
+                'avatar':self.avatar(128)
             }
         }
         if include_email:
@@ -85,24 +98,41 @@ class User(PaginatedAPIMixin,db.Model):
         if new_user and 'password' in data:
             self.password = data['password']
 
-    def get_token(self,expires_in=3600):
+    def get_token(self,expires_in=600):
+        # 获取当前时间
         now = datetime.utcnow()
-        if self.token and self.token_expiration > now+timedelta(seconds=60):
-            return self.token
-        # 生产随机的二进制token数据再进行decode解码
-        self.token = base64.b64encode(os.urandom(24)).decode('utf-8')
-        self.token_expiration = datetime.utcnow() + timedelta(seconds=expires_in)
-        db.session.add(self)
-        return self.token
+        payload = {
+            'user_id': self.id,
+            'name': self.name if self.name else self.username,
+            'exp': now + timedelta(seconds=expires_in),
+            'iat': now
+        }
+        return jwt.encode(
+            payload,
+            current_app.config['SECRET_KEY'],
+            algorithm='HS256').decode('utf-8')
 
-    def revoke_token(self):
-        """取消token,设置token时间为当前时间-1秒"""
-        self.token_expiration = datetime.utcnow() - timedelta(seconds=1)
+    def ping(self):
+        '''更新用户的最后访问时间'''
+        self.last_seen = datetime.utcnow()
+        db.session.add(self)
 
     @staticmethod
-    def check_token(token):
-        user = User.query.filter_by(token=token).first()
-        if user is None or user.token_expiration < datetime.utcnow():
-            # token有效时间小于当前的时间
+    def verify_token(token):
+        # 捕获异常信息
+            # 解码jwt
+        try:
+            payload = jwt.decode(
+                token,
+                current_app.config["SECRET_KEY"],
+                algorithms="HS256"
+            )
+        except (jwt.exceptions.ExpiredSignatureError, jwt.exceptions.InvalidSignatureError) as e:
+            # Token过期，或被人修改，那么签名验证也会失败
             return None
-        return user
+        # 返回用户
+        return User.query.get(payload.get('user_id'))
+
+    def avatar(self,size):
+        digest = md5(self.email.lower().encode('utf-8')).hexdigest()
+        return 'https://www.gravatar.com/avatar/{}?d=identicon&s={}'.format(digest, size)

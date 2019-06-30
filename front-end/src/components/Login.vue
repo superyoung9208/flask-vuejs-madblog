@@ -76,9 +76,8 @@ export default {
         // 表单验证没通过时，不继续往下执行，即不会通过 axios 调用后端API
         return false
       }
-      const path = 'http://localhost:5000/api/tokens'
-      // axios 实现Basic Auth需要在config中设置 auth 这个属性即可
-      axios.post(path, {}, {
+      const path = '/tokens'  // 不用指定完整的 API 地址
+        this.$axios.post(path, {}, {
         auth: {
           'username': this.loginForm.username,
           'password': this.loginForm.password

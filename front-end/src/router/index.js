@@ -40,6 +40,14 @@ const router = new Router({
       path: '/ping',
       name: 'Ping',
       component: Ping
+    },
+    {
+      path: '/user/:id',
+      name: 'Profile',
+      component: Profile,
+      meta: {
+        requiresAuth: true
+      }
     }
   ]
 })

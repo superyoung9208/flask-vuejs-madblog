@@ -11,6 +11,7 @@ from . import bp
 def get_token():
     # 获取前端数据进行校验
     token = g.current_user.get_token()
+    g.current_user.ping()
     db.session.commit()
 
     return jsonify({'token':token})

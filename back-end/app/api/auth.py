@@ -20,7 +20,7 @@ def verify_password(username,password):
 def verify_token(token):
     """检查token是否有效"""
 
-    user = User.check_token(token)
+    user = User.verify_token(token)
     g.current_user = user if user else None
     return g.current_user is not None
 
