@@ -3,13 +3,16 @@ File:user.py
 Author:Young
 """
 import re
+from datetime import datetime
 
+from flask import current_app
+from flask import g
 from flask import request, jsonify,url_for
 
 from app import db
 from app.api.auth import token_auth
 from app.api.error import bad_request
-from app.models import User
+from app.models import User, Post
 from . import bp
 
 @bp.route('/users',methods=['POST'])
@@ -112,3 +115,107 @@ def update_user(id):
 def delete_user(id):
     """修改单个用户"""
     pass
+
+
+# 用户关注接口设计
+# GET follow/<id> 关注一个用户
+# GET unfollow/<id> 取消关注用户
+# GET users/<id>/followers 返回用户的粉丝
+# GET users/<id>/followeds 返回用户的关注
+# GET users/<id>/posts 返回当前用户的文章
+# GET users/<id>/followeds-posts/ 返回用户粉丝的文章
+
+@bp.route('/follow/<int:id>',methods=['GET'])
+@token_auth.login_required
+def follow(id):
+    """关注用户一个用户"""
+    user = User.query.get_or_404(id)
+    if g.current_user == user:
+        return bad_request("You cannot follow youself")
+    if g.current_user.is_following(user):
+        return bad_request("You have already followed that user")
+    g.current_user.follow(user)
+    db.session.commit()
+    return jsonify({
+        'status':'success',
+        'message':'you are now following {}'.format(id)
+    })
+
+
+@bp.route('/unfollow/<int:id>',methods=['GET'])
+@token_auth.login_required
+def unfollow(id):
+    """取消关注一个用户"""
+    user = User.query.get_or_404(id)
+    if g.current_user == user:
+        return bad_request('You cannot follow yourself.')
+    if not g.current_user.is_following(user):
+        return bad_request('You are not following this user.')
+    g.current_user.unfollow(user)
+    db.session.commit()
+    return jsonify({
+        'status':'success',
+        'message':'You are not following {} anymore.'.format(id)
+    })
+
+@bp.route('/users/<int:id>/followers',methods=['GET'])
+@token_auth.login_required
+def get_followers(id):
+    """获取用户的粉丝"""
+    user = User.query.get_or_404(id)
+    page = request.args.get('page',1,type=int)
+    per_page = min(request.args.get('per_page',current_app.config['USERS_PER_PAGE'], type=int),100)
+
+    data = User.to_collection_dict(user.followers,page,per_page,'api.get_followers',id=id)
+    # 为每个粉丝添加is_following标准
+    for item in data['items']:
+        item['is_following'] = g.current.user.is_following(User.query.get(item['id']))
+        res = db.engine.execute(
+            "select * from followers where follower_id={} and followed_id={}".format(user.id,item['id'])
+        )
+        item['timestamp'] = datetime.strptime(list(res)[0][2],'%Y-%m-%d %H:%M:%S.%f')
+
+    return jsonify(data)
+
+@bp.route('/users/<int:id>/followeds',methods=['GET'])
+def get_followeds(id):
+    """获取用户的关注"""
+    user = User.query.get_or_404(id)
+    page = request.args.get('page',1,type=int)
+    per_page = min(request.args.get('per_page',current_app.config['USERS_PER_PAGE'], type=int),100)
+    data = User.to_collection_dict(user.followeds, page, per_page, 'api.get_followers', id=id)
+    # 为每个关注者添加is_following标志
+    for item in data['items']:
+        item['is_following'] = g.current.user.is_following(User.query.get(item['id']))
+        res = db.engine.execute(
+            "select * from followers where follower_id={} and followed_id={}".format(user.id, item['id'])
+        )
+        item['timestamp'] = datetime.strptime(list(res)[0][2], '%Y-%m-%d %H:%M:%S.%f')
+
+    return jsonify(data)
+
+@bp.route('users/<int:id>/followeds-posts',methods=['GET'])
+def get_user_followed_posts(id):
+    """返回被关注者的文章列表"""
+    user = User.query.get_or_404(id)
+    page = request.args.get('page', 1, type=int)
+    per_page = min(
+        request.args.get(
+            'per_page', current_app.config['POSTS_PER_PAGE'], type=int), 100)
+
+    data = Post.to_collection_dict(user.followed_posts,page,per_page,'api.get_user_posts',id=id)
+
+    return jsonify(data)
+
+@bp.route('users/<int:id>/posts',methods=['GET'])
+def get_user_posts(id):
+    """获取用户的文章"""
+    user = User.query.get_or_404(id)
+    page = request.args.get('page',1,type=int)
+    per_page = min(
+        request.args.get(
+            'per_page', current_app.config['POSTS_PER_PAGE'], type=int), 100)
+
+    data = Post.to_collection_dict(user.posts.orderby(Post.timestamp.desc()),page,per_page,'api.get_user_posts',id=id)
+
+    return jsonify(data)

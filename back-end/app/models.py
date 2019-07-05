@@ -13,6 +13,14 @@ from flask import url_for
 from . import db
 from werkzeug.security import check_password_hash,generate_password_hash
 
+
+followers = db.Table(
+    'followers',
+    db.Column('follower_id', db.Integer, db.ForeignKey('users.id')),
+    db.Column('followed_id', db.Integer, db.ForeignKey('users.id')),
+    db.Column('timestamp', db.DateTime, default=datetime.utcnow)
+)
+
 class PaginatedAPIMixin(object):
     """用户扩展类"""
 
@@ -55,6 +63,35 @@ class User(PaginatedAPIMixin,db.Model):
     member_since = db.Column(db.DateTime(), default=datetime.utcnow)
     last_seen = db.Column(db.DateTime(), default=datetime.utcnow)
     posts = db.relationship('Post',backref='author',cascade='all,delete-orphan',lazy='dynamic')
+
+    followeds = db.relationship('User', secondary=followers,
+        primaryjoin=(followers.c.follower_id == id),
+        secondaryjoin=(followers.c.followed_id == id),
+        backref=db.backref('followers', lazy='dynamic'), lazy='dynamic')
+
+    @property
+    def followed_posts(self):
+        followed = Post.query.join(
+            followers,(followers.c.followed_id==Post.author_id).filter(
+                followers.c.follower_id == self.id
+            ))
+        return followed.order_by(Post.timestamp.desc())
+
+    def is_following(self,user)->bool:
+        """判断是否关注user对象"""
+        return self.followeds.filter(
+            followers.c.followed_id == user.id
+        ).count() > 0
+
+    def follow(self,user):
+        """关注user对象"""
+        if not self.is_following(user):
+            self.followeds.append(user)
+
+    def unfollow(self,user):
+        """取消user对象的关注"""
+        if self.is_following(user):
+            self.followeds.remove(user)
 
     def __repr__(self):
         return '<User {}>'.format(self.username)
