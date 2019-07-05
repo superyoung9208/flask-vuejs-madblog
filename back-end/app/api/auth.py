@@ -1,3 +1,7 @@
+"""
+File:auth.py
+Author:Young
+"""
 from flask import g
 from flask_httpauth import HTTPBasicAuth, HTTPTokenAuth
 from app.models import User

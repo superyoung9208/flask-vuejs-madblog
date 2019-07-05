@@ -1,3 +1,7 @@
+"""
+File:madblog.py
+Author:Young
+"""
 import os
 import sys
 

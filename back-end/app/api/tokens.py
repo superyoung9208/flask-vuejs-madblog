@@ -1,3 +1,8 @@
+"""
+File:tokens.py
+Author:Young
+"""
+
 """客户端申请 Token"""
 from flask import g, jsonify
 from flask import request
@@ -16,9 +21,9 @@ def get_token():
 
     return jsonify({'token':token})
 
-@bp.route("/tokens",methods=["DELETE"])
-@token_auth.login_required
-def del_token():
-    g.current_user.revoke_token()
-    db.session.commit()
-    return "",204
+# @bp.route("/tokens",methods=["DELETE"])
+# @token_auth.login_required
+# def del_token():
+#     g.current_user.revoke_token()
+#     db.session.commit()
+#     return "",204

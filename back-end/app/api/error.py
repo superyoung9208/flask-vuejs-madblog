@@ -1,3 +1,7 @@
+"""
+File:error.py
+Author:Young
+"""
 from flask import jsonify
 from werkzeug.http import HTTP_STATUS_CODES
 
@@ -6,6 +10,7 @@ from app.api import bp
 
 
 def error_response(status_code,message=None):
+    """构造错误响应数据"""
     # payload 根据状态码返回错误信息,未能识别的状态码默认为Unknown error
     payload = {'error':HTTP_STATUS_CODES.get(status_code,'Unknown error')}
     # 如果有消息则设置消息.
@@ -24,9 +29,11 @@ def bad_request(message):
 
 @bp.app_errorhandler(404)
 def not_found_error(error):
+    """捕获404错误"""
     return error_response(404)
 
 @bp.app_errorhandler(500)
 def internal_error(error):
+    """捕获500错误"""
     db.session.rollback()
     return error_response(500)

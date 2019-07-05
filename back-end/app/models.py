@@ -1,5 +1,7 @@
-import base64
-import os
+"""
+File:models.py
+Author:laoyang
+"""
 from _md5 import md5
 
 from datetime import datetime, timedelta
@@ -42,6 +44,7 @@ class PaginatedAPIMixin(object):
 
 
 class User(PaginatedAPIMixin,db.Model):
+    __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), index=True, unique=True)
     email = db.Column(db.String(120), index=True, unique=True)
@@ -51,7 +54,7 @@ class User(PaginatedAPIMixin,db.Model):
     about_me = db.Column(db.Text())
     member_since = db.Column(db.DateTime(), default=datetime.utcnow)
     last_seen = db.Column(db.DateTime(), default=datetime.utcnow)
-
+    posts = db.relationship('Post',backref='author',cascade='all,delete-orphan',lazy='dynamic')
 
     def __repr__(self):
         return '<User {}>'.format(self.username)
@@ -136,3 +139,40 @@ class User(PaginatedAPIMixin,db.Model):
     def avatar(self,size):
         digest = md5(self.email.lower().encode('utf-8')).hexdigest()
         return 'https://www.gravatar.com/avatar/{}?d=identicon&s={}'.format(digest, size)
+
+
+class Post(PaginatedAPIMixin,db.Model):
+    """文章模型类"""
+    __tablename__ = 'posts'
+    id = db.Column(db.Integer,primary_key=True)
+    title = db.Column(db.String(255))
+    summary = db.Column(db.Text)
+    body = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime(),index=True,default=datetime.utcnow)
+    views = db.Column(db.Integer,default=0)
+    author_id = db.Column(db.Integer,db.ForeignKey('users.id'))
+
+    def __repr__(self):
+        return "<POST{}>".format(self.title)
+
+    def from_dict(self,data:dict):
+        """接收表单数据构建post对象并返回"""
+        for filed in ["title","body","summary"]:
+            if filed in data:
+                setattr(self,filed,data[filed])
+
+    def to_dict(self):
+
+        data = {
+            'id':self.id,
+            'title':self.title,
+            'body':self.body,
+            'summary':self.summary,
+            'author_id':self.author_id,
+            '_links':{
+                'self':url_for('api.get_post',id=self.id),
+                'author_url':url_for('api.get_users',id=self.author_id)
+            }
+        }
+
+        return data
