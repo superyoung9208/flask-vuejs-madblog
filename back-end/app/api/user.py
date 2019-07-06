@@ -57,7 +57,7 @@ def create_user():
     return response
 
 
-@bp.route('/users',methods=['GET'])
+@bp.route('/users/',methods=['GET'])
 @token_auth.login_required
 def get_users():
     """返回所有用户的集合"""

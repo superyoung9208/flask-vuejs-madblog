@@ -4,6 +4,8 @@ Author:Young
 """
 from flask import g
 from flask_httpauth import HTTPBasicAuth, HTTPTokenAuth
+
+from app import db
 from app.models import User
 from app.api.error import error_response
 
@@ -24,10 +26,12 @@ def verify_password(username,password):
 def verify_token(token):
     """检查token是否有效"""
 
-    user = User.verify_token(token)
-    g.current_user = user if user else None
+    g.current_user = User.verify_token(token) if token else None
+    if g.current_user:
+        # 每次认证通过后（即将访问资源API），更新 last_seen 时间
+        g.current_user.ping()
+        db.session.commit()
     return g.current_user is not None
-
 
 @basic_auth.error_handler
 def basic_auth_error():

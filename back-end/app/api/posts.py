@@ -21,14 +21,15 @@ from . import bp
 # put api/posts/<id> 修改一篇文章
 # delete api/posts/<id> 删除一篇博客
 
-@bp.route('/posts',methods=["GET"])
+@bp.route('/posts/',methods=["GET"])
 def get_posts():
-    """获取所有文章"""
-    page = request.args('page',1,type=int)
-    per_page = request.args('per_page',10,type=int)
-    Post.to_collection_dict(Post.timestamp.desc(),page,per_page, 'api.get_posts')
+    """获取所有文章"""''
+    page = request.args.get('page',1,type=int)
+    per_page = request.args.get('per_page',10,type=int)
+    data = Post.to_collection_dict(Post.query.order_by(Post.timestamp.desc()),page,per_page, 'api.get_posts')
+    return jsonify(data)
 
-@bp.route('/posts',methods=["POST"])
+@bp.route('/posts/',methods=["POST"])
 @token_auth.login_required
 def create_post():
     """创建一篇文章"""
