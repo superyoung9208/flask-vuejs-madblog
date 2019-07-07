@@ -3,6 +3,7 @@ File:posts.py
 Author:Young
 """
 from flask import abort
+from flask import current_app
 from flask import g
 from flask import request, jsonify
 from flask import url_for
@@ -10,8 +11,9 @@ from flask import url_for
 from app import db
 from app.api.auth import token_auth
 from app.api.error import bad_request, error_response
-from app.models import Post
+from app.models import Post, Comment
 from . import bp
+
 
 # RestfulApi 设计
 
@@ -21,24 +23,25 @@ from . import bp
 # put api/posts/<id> 修改一篇文章
 # delete api/posts/<id> 删除一篇博客
 
-@bp.route('/posts/',methods=["GET"])
+@bp.route('/posts/', methods=["GET"])
 def get_posts():
     """获取所有文章"""''
-    page = request.args.get('page',1,type=int)
-    per_page = request.args.get('per_page',10,type=int)
-    data = Post.to_collection_dict(Post.query.order_by(Post.timestamp.desc()),page,per_page, 'api.get_posts')
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    data = Post.to_collection_dict(Post.query.order_by(Post.timestamp.desc()), page, per_page, 'api.get_posts')
     return jsonify(data)
 
-@bp.route('/posts/',methods=["POST"])
+
+@bp.route('/posts/', methods=["POST"])
 @token_auth.login_required
 def create_post():
     """创建一篇文章"""
     json_data = request.json
     if not json_data:
         return bad_request('You must post Json data')
-    message={}
+    message = {}
     if 'title' not in json_data and not json_data.get('title'):
-        message['title'] =  'Title is required.'
+        message['title'] = 'Title is required.'
     elif len(json_data.get('title')) > 255:
         message['title'] = 'Title must less than 255 characters.'
     if 'body' not in json_data and not json_data.get('body'):
@@ -60,7 +63,8 @@ def create_post():
     response.headers['Location'] = url_for('api.get_post', id=post.id)
     return response
 
-@bp.route('/posts/<int:id>',methods=["GET"])
+
+@bp.route('/posts/<int:id>', methods=["GET"])
 def get_post(id):
     """获取一篇文章"""
     post = Post.query.get_or_404(id)
@@ -71,7 +75,8 @@ def get_post(id):
     db.session.commit()
     return jsonify(post.to_dict())
 
-@bp.route('/posts/<int:id>',methods=["PUT"])
+
+@bp.route('/posts/<int:id>', methods=["PUT"])
 @token_auth.login_required
 def update_post(id):
     """更新一篇文章"""
@@ -82,7 +87,7 @@ def update_post(id):
 
     if not json_data:
         return bad_request("you must post Json data")
-    message ={}
+    message = {}
     if 'title' not in json_data and not json_data.get("title"):
         message["title"] = "title is required"
     elif len(json_data["title"]) > 255:
@@ -97,7 +102,8 @@ def update_post(id):
     db.session.commit()
     return jsonify(post.to_dict())
 
-@bp.route('/posts/<int:id>',methods=["DELETE"])
+
+@bp.route('/posts/<int:id>', methods=["DELETE"])
 @token_auth.login_required
 def delete_post(id):
     """删除一篇文章"""
@@ -107,4 +113,24 @@ def delete_post(id):
     db.session.delete(post)
     db.session.commit()
 
-    return "",204
+    return "", 204
+
+
+@bp.route('/posts/<int:id>/comments/', methods=["GET"])
+def get_post_comments(id):
+    """获取文章下的所有评论"""
+    post = Post.query.get_or_404(id)
+    page = request.args.get('page', 1, type=int)
+    per_page = min(
+        request.args.get(
+            'per_page', current_app.config['COMMENTS_PER_PAGE'], type=int), 100)
+    data = Comment.to_collection_dict(post.comments.filter(Comment.parent \
+                                                           == None).order_by(Comment.timestamp.desc()), page, per_page,
+                                      'api.get_post_comments', id=id)
+    from operator import itemgetter
+    for item in data['items']:
+        comment = Comment.query.get(item['id'])
+        descendants = [child.to_dict() for child in comment.get_descendants()]
+        item['descendants'] = sorted(descendants, keys=itemgetter('timestamp'))
+
+    return jsonify(data)

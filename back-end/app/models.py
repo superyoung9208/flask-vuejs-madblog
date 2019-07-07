@@ -11,8 +11,7 @@ from flask import current_app
 from flask import url_for
 
 from . import db
-from werkzeug.security import check_password_hash,generate_password_hash
-
+from werkzeug.security import check_password_hash, generate_password_hash
 
 followers = db.Table(
     'followers',
@@ -21,21 +20,22 @@ followers = db.Table(
     db.Column('timestamp', db.DateTime, default=datetime.utcnow)
 )
 
+
 class PaginatedAPIMixin(object):
     """用户扩展类"""
 
     # 根据传入的参数来进行所有用户的序列化操作
     @staticmethod
-    def to_collection_dict(query,page,per_page,endpoint,**kwargs):
-        resources = query.paginate(page,per_page,False)
+    def to_collection_dict(query, page, per_page, endpoint, **kwargs):
+        resources = query.paginate(page, per_page, False)
 
         data = {
-            'items':[item.to_dict() for item in resources.items],
-            '_meta':{
-                "page":page,
-                "per_page":per_page,
-                "total_pages":resources.pages,
-                "total_items":resources.total,
+            'items': [item.to_dict() for item in resources.items],
+            '_meta': {
+                "page": page,
+                "per_page": per_page,
+                "total_pages": resources.pages,
+                "total_items": resources.total,
             },
             '_links': {
                 'self': url_for(endpoint, page=page, per_page=per_page,
@@ -50,8 +50,7 @@ class PaginatedAPIMixin(object):
         return data
 
 
-
-class User(PaginatedAPIMixin,db.Model):
+class User(PaginatedAPIMixin, db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), index=True, unique=True)
@@ -62,33 +61,33 @@ class User(PaginatedAPIMixin,db.Model):
     about_me = db.Column(db.Text())
     member_since = db.Column(db.DateTime(), default=datetime.utcnow)
     last_seen = db.Column(db.DateTime(), default=datetime.utcnow)
-    posts = db.relationship('Post',backref='author',cascade='all,delete-orphan',lazy='dynamic')
+    posts = db.relationship('Post', backref='author', cascade='all,delete-orphan', lazy='dynamic')
 
     followeds = db.relationship('User', secondary=followers,
-        primaryjoin=(followers.c.follower_id == id),
-        secondaryjoin=(followers.c.followed_id == id),
-        backref=db.backref('followers', lazy='dynamic'), lazy='dynamic')
+                                primaryjoin=(followers.c.follower_id == id),
+                                secondaryjoin=(followers.c.followed_id == id),
+                                backref=db.backref('followers', lazy='dynamic'), lazy='dynamic')
 
     @property
     def followed_posts(self):
         followed = Post.query.join(
-            followers,(followers.c.followed_id==Post.author_id).filter(
+            followers, (followers.c.followed_id == Post.author_id).filter(
                 followers.c.follower_id == self.id
             ))
         return followed.order_by(Post.timestamp.desc())
 
-    def is_following(self,user)->bool:
+    def is_following(self, user) -> bool:
         """判断是否关注user对象"""
         return self.followeds.filter(
             followers.c.followed_id == user.id
         ).count() > 0
 
-    def follow(self,user):
+    def follow(self, user):
         """关注user对象"""
         if not self.is_following(user):
             self.followeds.append(user)
 
-    def unfollow(self,user):
+    def unfollow(self, user):
         """取消user对象的关注"""
         if self.is_following(user):
             self.followeds.remove(user)
@@ -103,42 +102,41 @@ class User(PaginatedAPIMixin,db.Model):
 
     # 把设置属性的方法装饰为赋值
     @password.setter
-    def password(self,value:str):
+    def password(self, value: str):
         self.password_hash = generate_password_hash(value)
 
     # 密码检查返回布尔类型
-    def check_password(self,password:str) -> bool:
-        return check_password_hash(self.password_hash,password)
+    def check_password(self, password: str) -> bool:
+        return check_password_hash(self.password_hash, password)
 
-
-    def to_dict(self,include_email=False):
+    def to_dict(self, include_email=False):
         # 序列化抽象模型类
         data = {
-            'id':self.id,
-            'username':self.username,
-            'email':self.email,
-            'name':self.name,
-            'location':self.location,
+            'id': self.id,
+            'username': self.username,
+            'email': self.email,
+            'name': self.name,
+            'location': self.location,
             'member_since': self.member_since.isoformat() + 'Z',
             'last_seen': self.last_seen.isoformat() + 'Z',
-            '_links':{
-                'self':url_for('api.get_user',id=self.id),
-                'avatar':self.avatar(128)
+            '_links': {
+                'self': url_for('api.get_user', id=self.id),
+                'avatar': self.avatar(128)
             }
         }
         if include_email:
             data['email'] = self.email
         return data
 
-    def from_dict(self,data,new_user=False):
+    def from_dict(self, data, new_user=False):
         # 接收前段json数据并执行反序列化
-        for field in ['username','email']:
+        for field in ['username', 'email']:
             if field in data:
-                setattr(self,field,data[field])
+                setattr(self, field, data[field])
         if new_user and 'password' in data:
             self.password = data['password']
 
-    def get_token(self,expires_in=600):
+    def get_token(self, expires_in=600):
         # 获取当前时间
         now = datetime.utcnow()
         payload = {
@@ -160,7 +158,7 @@ class User(PaginatedAPIMixin,db.Model):
     @staticmethod
     def verify_token(token):
         # 捕获异常信息
-            # 解码jwt
+        # 解码jwt
         try:
             payload = jwt.decode(
                 token,
@@ -173,43 +171,140 @@ class User(PaginatedAPIMixin,db.Model):
         # 返回用户
         return User.query.get(payload.get('user_id'))
 
-    def avatar(self,size):
+    def avatar(self, size):
         digest = md5(self.email.lower().encode('utf-8')).hexdigest()
         return 'https://www.gravatar.com/avatar/{}?d=identicon&s={}'.format(digest, size)
 
 
-class Post(PaginatedAPIMixin,db.Model):
+class Post(PaginatedAPIMixin, db.Model):
     """文章模型类"""
     __tablename__ = 'posts'
-    id = db.Column(db.Integer,primary_key=True)
+    id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(255))
     summary = db.Column(db.Text)
     body = db.Column(db.Text)
-    timestamp = db.Column(db.DateTime(),index=True,default=datetime.utcnow)
-    views = db.Column(db.Integer,default=0)
-    author_id = db.Column(db.Integer,db.ForeignKey('users.id'))
+    timestamp = db.Column(db.DateTime(), index=True, default=datetime.utcnow)
+    views = db.Column(db.Integer, default=0)
+    author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    comments = db.relationship('Comment', backref='post', lazy='dynamic', cascade='all,delete-orphan')
 
     def __repr__(self):
         return "<POST{}>".format(self.title)
 
-    def from_dict(self,data:dict):
+    def from_dict(self, data: dict):
         """接收表单数据构建post对象并返回"""
-        for filed in ["title","body","summary"]:
+        for filed in ["title", "body", "summary"]:
             if filed in data:
-                setattr(self,filed,data[filed])
+                setattr(self, filed, data[filed])
 
     def to_dict(self):
 
         data = {
-            'id':self.id,
-            'title':self.title,
-            'body':self.body,
-            'summary':self.summary,
-            'author_id':self.author_id,
-            '_links':{
-                'self':url_for('api.get_post',id=self.id),
-                'author_url':url_for('api.get_users',id=self.author_id)
+            'id': self.id,
+            'title': self.title,
+            'body': self.body,
+            'summary': self.summary,
+            'author_id': self.author_id,
+            '_links': {
+                'self': url_for('api.get_post', id=self.id),
+                'author_url': url_for('api.get_users', id=self.author_id)
             }
         }
 
         return data
+
+
+# 评论点赞
+comments_likes = db.Table(
+    'comments_likes',
+    db.Column('user_id',db.Integer,db.ForeignKey('users.id')),
+    db.Column('comments_id',db.Integer,db.ForeignKey('comments.id')),
+    db.Column('timestamp', db.DateTime, default=datetime.utcnow)
+)
+
+
+class Comment(PaginatedAPIMixin, db.Model):
+    """评论模型类"""
+    __tablename__ = 'comments'
+    id = db.Column(db.Integer, primary_key=True)
+    body = db.Column(db.TEXT)
+    timestamp = db.Column(db.DateTime, index=True)
+    mark_read = db.Column(db.Boolean, default=False)  # 是否已读
+    disabled = db.Column(db.Boolean, default=False)  # 屏蔽显示
+    # 评论者的id
+    author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    # 评论博文的id
+    post_id = db.Column(db.Integer, db.ForeignKey('posts.id'))
+    # 父评论id
+    parent_id = db.Column(db.Integer, db.ForeignKey('comments.id', ondelete='CASCADE'))
+    parent = db.relationship('Comment', backref= \
+        db.backref('children', cascade='all,delete-orphan'), remote_side=[id])
+    likers = db.relationship('User',secondary=comments_likes,backref=db.backref('liked_comments',lazy='dynamic'))
+
+    def __repr__(self):
+        """控制台输出"""
+        return "<Comment {}>".format(self.id)
+
+    def get_descendants(self):
+        '''获取一级评论的所有子孙'''
+        data = set()
+
+        def descendants(comment):
+            if comment.children:
+                data.update(comment.children)
+                for child in comment.children:
+                    descendants(child)
+
+        descendants(self)
+        return data
+
+    def from_dict(self, data: dict):
+        """填充数据至当前模型类"""
+        for filed in ['body', 'timestamp', 'mark_read', 'disabled', 'post_id', 'parent_id']:
+            setattr(self, filed, data[filed])
+
+    def to_dict(self) -> dict:
+        """序列化评论模型"""
+        data = {
+            'id': self.id,
+            'body': self.body,
+            'timestamp': self.timestamp,
+            'mark_read': self.mark_read,
+            'disabled': self.disabled,
+            'author': {
+                'id': self.author.id,
+                'username': self.author.username,
+                'name': self.author.name,
+                'avatar': self.author.avatar(128)
+            },
+            'post': {
+                'id': self.post.id,
+                'title': self.post.title,
+                'author_id': self.post.author.id
+            },
+            'parent_id': self.parent_id if self.parent else None,
+            '_links': {
+                'self': url_for('api.get_comment', id=self.id),
+                'author_url': url_for('api.get_user', id=self.author_id),
+                'post_url': url_for('api.get_post', id=self.post_id),
+                'parent_url': url_for('api.get_comment', id=self.parent_id) if self.parent else None,
+                'children_url': [url_for('api.get_comment', id=child.id) for child in
+                                 self.children] if self.childeren else None
+            }
+        }
+
+        return data
+
+    def is_liked_by(self, user):
+        """用户是否点赞"""
+        return user in self.likers
+
+    def liked_by(self,user):
+        """点赞评论"""
+        if not self.is_liked_by(user):
+            self.likers.append(user)
+
+    def un_liked_by(self,user):
+        """取消点赞"""
+        if self.is_liked_by(user):
+            self.likers.remove(user)
