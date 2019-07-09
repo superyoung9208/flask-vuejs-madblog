@@ -47,6 +47,8 @@ def create_comment():
 
     # 201响应的请求头中要包含一个location
     response.headers['Location']= url_for('api.get_comment',id=comment.id)
+    # 给用户发送新评论的通知
+    post.author.add_notification('unread_recived_comments_count',post.author.new_recived_comments())
     return response
 
 @bp.route('/comments/',methods=["GET"])
@@ -88,6 +90,8 @@ def delete_comment(id):
         return error_response(403)
     db.session.delete(comment)
     db.session.commit()
+    comment.post.author.add_notification('unread_recived_comments_count',
+                                 comment.post.author.new_recived_comments())
     return '', 204
 
 @bp.route('/comments/<int:id>/like',methods=["GET"])
@@ -111,7 +115,7 @@ def unlike_comment(id):
     comment = Comment.query.get_or_404(id)
     comment.un_liked_by(g.current_user)
     db.session.add(comment)
-    db.session.commit()
+    db.session.comjavamit()
 
     return jsonify({
         'status': 'success',

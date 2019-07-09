@@ -3,8 +3,6 @@ File:config.py
 Author:Young
 """
 import os
-import sys
-from dotenv import load_dotenv
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 

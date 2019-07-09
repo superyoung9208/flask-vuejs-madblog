@@ -2,10 +2,11 @@
 File:models.py
 Author:laoyang
 """
+import json
 from _md5 import md5
 
 from datetime import datetime, timedelta
-
+from time import time
 import jwt
 from flask import current_app
 from flask import url_for
@@ -62,11 +63,19 @@ class User(PaginatedAPIMixin, db.Model):
     member_since = db.Column(db.DateTime(), default=datetime.utcnow)
     last_seen = db.Column(db.DateTime(), default=datetime.utcnow)
     posts = db.relationship('Post', backref='author', cascade='all,delete-orphan', lazy='dynamic')
-
+    last_recived_comments_read_time = db.Column(db.DateTime)  # 最后一次收到评论的时间
+    # 用户最后一次查看 用户的粉丝 页面的时间，用来判断哪些粉丝是新的
+    last_follows_read_time = db.Column(db.DateTime)
+    # 用户最后一次查看 收到的点赞 页面的时间，用来判断哪些点赞是新的
+    last_likes_read_time = db.Column(db.DateTime)
+    # 用户最后一次查看 关注的人的博客 页面的时间，用来判断哪些文章是新的
+    last_followeds_posts_read_time = db.Column(db.DateTime)
     followeds = db.relationship('User', secondary=followers,
                                 primaryjoin=(followers.c.follower_id == id),
                                 secondaryjoin=(followers.c.followed_id == id),
                                 backref=db.backref('followers', lazy='dynamic'), lazy='dynamic')
+
+    notifications = db.relationship('Nocification', backref='user', lazy='dynamic', cascade='all,delete-orphan')
 
     @property
     def followed_posts(self):
@@ -175,6 +184,44 @@ class User(PaginatedAPIMixin, db.Model):
         digest = md5(self.email.lower().encode('utf-8')).hexdigest()
         return 'https://www.gravatar.com/avatar/{}?d=identicon&s={}'.format(digest, size)
 
+    def new_recived_comments(self):
+        """用户下未读评论计数"""
+        last_read_time = self.last_recived_comments_read_time or datetime(1900, 1, 1)
+        # 用户发布的文章的id
+        user_posts_ids = [post.id for post in self.posts.all()]
+        reviced_comments = Comment.query.fileter(Comment.post_id.in_(user_posts_ids), Comment.author == self)
+        return reviced_comments.filter(Comment.timestamp > last_read_time).count()
+
+    def add_notification(self, name, data):
+        """为用户添加一个通知"""
+        self.notifications.filter(name == name).delete()
+        n = Notification(name=name, payload_json=json.dumps(data), user=self)
+        db.session.add(n)
+        return n
+
+    def new_follows(self):
+        """新的粉丝记数"""
+        last_read_time = self.last_follows_read_time or datetime(1900,0,0)
+        return self.followers.filter(followers.c.timestamp>last_read_time).count()
+
+    def new_likes(self):
+        """用户收到的点赞数量"""
+        last_read_time = self.last_likes_read_time or datetime(1900,0,0)
+        comment = self.comments.join(comments_likes).all()
+        news_likes_count = 0
+        for c in comment:
+            # 获取点赞时间
+            for u in c.likes:
+                res = db.engine.execute("select * from comments_likes where user_id={} and comment_id={}".format(u.id,c.id))
+                timestapm = datetime.strptime(list(res)[0][2],'%Y-%m-%d %H:%M:%S.%f')
+                if timestapm > last_read_time:
+                    news_likes_count += 1
+        return news_likes_count
+
+    def new_follows(self):
+        """关注者发布的文章记数"""
+        last_read_time = self.last_followeds_posts_read_time or datetime(1900,0,0)
+        return self.followed_posts().filter(Post.timestamp>last_read_time).count()
 
 class Post(PaginatedAPIMixin, db.Model):
     """文章模型类"""
@@ -217,8 +264,8 @@ class Post(PaginatedAPIMixin, db.Model):
 # 评论点赞
 comments_likes = db.Table(
     'comments_likes',
-    db.Column('user_id',db.Integer,db.ForeignKey('users.id')),
-    db.Column('comments_id',db.Integer,db.ForeignKey('comments.id')),
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id')),
+    db.Column('comments_id', db.Integer, db.ForeignKey('comments.id')),
     db.Column('timestamp', db.DateTime, default=datetime.utcnow)
 )
 
@@ -239,7 +286,7 @@ class Comment(PaginatedAPIMixin, db.Model):
     parent_id = db.Column(db.Integer, db.ForeignKey('comments.id', ondelete='CASCADE'))
     parent = db.relationship('Comment', backref= \
         db.backref('children', cascade='all,delete-orphan'), remote_side=[id])
-    likers = db.relationship('User',secondary=comments_likes,backref=db.backref('liked_comments',lazy='dynamic'))
+    likers = db.relationship('User', secondary=comments_likes, backref=db.backref('liked_comments', lazy='dynamic'))
 
     def __repr__(self):
         """控制台输出"""
@@ -299,12 +346,55 @@ class Comment(PaginatedAPIMixin, db.Model):
         """用户是否点赞"""
         return user in self.likers
 
-    def liked_by(self,user):
+    def liked_by(self, user):
         """点赞评论"""
         if not self.is_liked_by(user):
             self.likers.append(user)
 
-    def un_liked_by(self,user):
+    def un_liked_by(self, user):
         """取消点赞"""
         if self.is_liked_by(user):
             self.likers.remove(user)
+
+
+class Notification(db.Model):
+    """用户通知"""
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(128), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    timestamp = db.Column(db.Float, index=True, default=time)
+    payload_json = db.Column(db.Text)
+
+    def __repr__(self):
+        return "<Notification {}>".format(self.id)
+
+    def get_data(self):
+        """加载payload数据"""
+        return json.loads(str(self.payload_json))
+
+    def to_dict(self):
+        """序列化模型类数据"""
+        data = {
+            'id': self.id,
+            'name': self.name,
+            'user': {
+                'id': self.user.id,
+                'username': self.user.username,
+                'name': self.user.name,
+                'avatar': self.user.avatar(128)
+            },
+            'timestamp': self.timestamp,
+            'payload': self.get_data(),
+            '_links': {
+                'self': url_for('api.get_notification', id=self.id),
+                'user_url': url_for('api.get_user', id=self.user_id)
+            }
+        }
+
+        return data
+
+    def from_dict(self, data):
+        """装载数据至模型类"""
+        for field in ["name", "payload"]:
+            if field in data:
+                setattr(self, field, data[field])
