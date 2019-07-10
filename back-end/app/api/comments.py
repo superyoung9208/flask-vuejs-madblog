@@ -42,6 +42,18 @@ def create_comment():
     comment.post = post
     db.session.add(comment)
     db.session.commit()
+    # 获取当前评论所有的祖先评论的作者
+    users = set()
+    users.add(comment.post.author)
+    if comment.parent:
+        ancestors_authors = {c.author for c in comment.get_ancestors()}
+        users = users|ancestors_authors
+    # 给所有的祖先评论作者发送通知
+    for u in users:
+        u.add_notification('unread_recived_comments_count',
+                           u.new_recived_comments())
+    db.session.commit()
+
     response = jsonify(comment.to_dict())
     response.status_code = 201
 
@@ -88,10 +100,22 @@ def delete_comment(id):
     comment = Comment.query.get_or_404(id)
     if g.current_user != comment.author and g.current_user != comment.post.author:
         return error_response(403)
+
+    # 获取当前评论所有的祖先评论的作者
+    users = set()
+    users.add(comment.post.author)
+    if comment.parent:
+        ancestors_authors = {c.author for c in comment.get_ancestors()}
+        users = users | ancestors_authors
+
     db.session.delete(comment)
     db.session.commit()
-    comment.post.author.add_notification('unread_recived_comments_count',
-                                 comment.post.author.new_recived_comments())
+
+    # 给所有的祖先评论作者发送通知
+    for u in users:
+        u.add_notification('unread_recived_comments_count',
+                           u.new_recived_comments())
+
     return '', 204
 
 @bp.route('/comments/<int:id>/like',methods=["GET"])
@@ -115,7 +139,7 @@ def unlike_comment(id):
     comment = Comment.query.get_or_404(id)
     comment.un_liked_by(g.current_user)
     db.session.add(comment)
-    db.session.comjavamit()
+    db.session.commit()
 
     return jsonify({
         'status': 'success',

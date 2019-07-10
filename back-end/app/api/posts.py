@@ -124,7 +124,7 @@ def get_post_comments(id):
     per_page = min(
         request.args.get(
             'per_page', current_app.config['COMMENTS_PER_PAGE'], type=int), 100)
-    data = Comment.to_collection_dict(post.comments.filter(Comment.parent \
+    data = Comment.to_collection_dict(post.comments.filter(Comment.parent
                                                            == None).order_by(Comment.timestamp.desc()), page, per_page,
                                       'api.get_post_comments', id=id)
     from operator import itemgetter

@@ -76,6 +76,20 @@ class User(PaginatedAPIMixin, db.Model):
                                 backref=db.backref('followers', lazy='dynamic'), lazy='dynamic')
 
     notifications = db.relationship('Nocification', backref='user', lazy='dynamic', cascade='all,delete-orphan')
+    # 用户发送的私信
+    messages_sent = db.relationship('Message', foreign_keys='Message.sender_id',
+                                    backref='sender', lazy='dynamic', cascade='all,delete-orphan')
+    # 用户接收的私信
+    messages_received = db.relationship('Message', foreign_keys='Message.recipient_id',
+                                    backref='recipient', lazy='dynamic', cascade='all,delete-orphan')
+    last_messages_read_time = db.Column(db.DateTime) #最后一次读取私信时间
+
+    def new_recived_messages(self)->int:
+        """最新未读的私信个数"""
+        last_read_time = self.last_messages_read_time or datetime(1900,0,0)
+
+        return Message.query.filter_by(recipient=self).filter(
+            Message.timestamp > last_read_time).count()
 
     @property
     def followed_posts(self):
@@ -189,8 +203,17 @@ class User(PaginatedAPIMixin, db.Model):
         last_read_time = self.last_recived_comments_read_time or datetime(1900, 1, 1)
         # 用户发布的文章的id
         user_posts_ids = [post.id for post in self.posts.all()]
-        reviced_comments = Comment.query.fileter(Comment.post_id.in_(user_posts_ids), Comment.author == self)
-        return reviced_comments.filter(Comment.timestamp > last_read_time).count()
+        q1 = set(Comment.query.fileter(Comment.post_id.in_(user_posts_ids), Comment.author == self))
+        q2 = set()
+        for c in self.comments:
+            q2 = q2 | c.get_descendants()
+        recived_comments = q1 | q2
+        return len([c for c in recived_comments if c.timestamp > last_read_time])
+
+    def new_recived_messages(self):
+        """用户未读私信计数"""
+        last_read_time = self.last_messages_read_time or datetime(1900,0,0)
+        return Message.query.filter_by(Message.recipient==self).filter(Message.timestamp>last_read_time).count()
 
     def add_notification(self, name, data):
         """为用户添加一个通知"""
@@ -201,27 +224,29 @@ class User(PaginatedAPIMixin, db.Model):
 
     def new_follows(self):
         """新的粉丝记数"""
-        last_read_time = self.last_follows_read_time or datetime(1900,0,0)
-        return self.followers.filter(followers.c.timestamp>last_read_time).count()
+        last_read_time = self.last_follows_read_time or datetime(1900, 0, 0)
+        return self.followers.filter(followers.c.timestamp > last_read_time).count()
 
     def new_likes(self):
         """用户收到的点赞数量"""
-        last_read_time = self.last_likes_read_time or datetime(1900,0,0)
+        last_read_time = self.last_likes_read_time or datetime(1900, 0, 0)
         comment = self.comments.join(comments_likes).all()
         news_likes_count = 0
         for c in comment:
             # 获取点赞时间
             for u in c.likes:
-                res = db.engine.execute("select * from comments_likes where user_id={} and comment_id={}".format(u.id,c.id))
-                timestapm = datetime.strptime(list(res)[0][2],'%Y-%m-%d %H:%M:%S.%f')
+                res = db.engine.execute(
+                    "select * from comments_likes where user_id={} and comment_id={}".format(u.id, c.id))
+                timestapm = datetime.strptime(list(res)[0][2], '%Y-%m-%d %H:%M:%S.%f')
                 if timestapm > last_read_time:
                     news_likes_count += 1
         return news_likes_count
 
     def new_follows(self):
         """关注者发布的文章记数"""
-        last_read_time = self.last_followeds_posts_read_time or datetime(1900,0,0)
-        return self.followed_posts().filter(Post.timestamp>last_read_time).count()
+        last_read_time = self.last_followeds_posts_read_time or datetime(1900, 0, 0)
+        return self.followed_posts().filter(Post.timestamp > last_read_time).count()
+
 
 class Post(PaginatedAPIMixin, db.Model):
     """文章模型类"""
@@ -305,6 +330,18 @@ class Comment(PaginatedAPIMixin, db.Model):
         descendants(self)
         return data
 
+    def get_ancestors(self):
+        """获取评论的所有爸爸们"""
+        data = []
+
+        def ancestors(comment):
+            if comment.parent:
+                data.append(comment.parent)
+                ancestors(comment.parent)
+
+        ancestors(self)
+        return data
+
     def from_dict(self, data: dict):
         """填充数据至当前模型类"""
         for filed in ['body', 'timestamp', 'mark_read', 'disabled', 'post_id', 'parent_id']:
@@ -359,6 +396,7 @@ class Comment(PaginatedAPIMixin, db.Model):
 
 class Notification(db.Model):
     """用户通知"""
+    __tablename__ = 'notifications'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128), index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
@@ -398,3 +436,39 @@ class Notification(db.Model):
         for field in ["name", "payload"]:
             if field in data:
                 setattr(self, field, data[field])
+
+
+class Message(PaginatedAPIMixin, db.Model):
+    """用户私信"""
+    __tablename__ = "messages"
+    id = db.Column(db.Integer, primary_key=True)
+    body = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow())
+    sender_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    recipient_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+
+    def __repr__(self):
+        return "<Message {}>".format(self.id)
+
+    def to_dict(self):
+        """序列化输出私信模型"""
+        data = {
+            'id': self.id,
+            'body': self.body,
+            'timestamp': self.timestamp if self.timestamp else datetime(1900, 0, 0),
+            'sender': self.sender.to_dict(),
+            'recipient': self.recipient.to_dict(),
+            '_links': {
+                'self': url_for('api.get_message', id=self.id),
+                'sender_url': url_for('api.get_user', id=self.sender_id),
+                'recipient_url': url_for('api.get_user', id=self.recipient_id),
+            }
+        }
+
+        return data
+
+    def from_dict(self, data: dict):
+        """装载数据至私信模型"""
+        for filed in ['body', 'timestamp']:
+            if filed in data:
+                setattr(self, filed, data[filed])
