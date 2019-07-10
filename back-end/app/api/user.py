@@ -389,3 +389,40 @@ def get_user_history_messages(id):
 
     data['items'] = messages
     return jsonify(data)
+
+@bp.route('/block/<int:id>',mehtods=["GET"])
+@token_auth.login_required
+def block(id):
+    """拉黑一个用户"""
+    user = User.query.get_or_404(id)
+    if g.current_user == user:
+        return bad_request('You cannot block yourself.')
+    if g.current_user.is_blocking(user):
+        return bad_request('You have already blocked that user')
+
+    g.current_user.block(user)
+    db.session.commit()
+
+    return jsonify({
+        'status':'success',
+        'message':"You are now blocking {}".format(user.name if user.name else user.username)
+    })
+
+@bp.route('/block/<int:id>',mehtods=["GET"])
+@token_auth.login_required
+def unblock(id):
+    """解除拉黑一个用户"""
+    user = User.query.get_or_404(id)
+    if g.current_user == user:
+        return bad_request('You cannot unblock yourself.')
+    if not g.current_user.is_blocking(user):
+        return bad_request('You are not blocking this user.')
+
+    g.current_user.unblock(user)
+    db.session.commit()
+
+    return jsonify({
+        'status':'success',
+        'message':'You are now unblocking {}'.format(user.name if user.name else user.username)
+    })
+

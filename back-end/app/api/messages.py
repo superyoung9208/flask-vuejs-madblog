@@ -38,6 +38,8 @@ def create_message():
     user = User.query.get_or_404(json_data['recipient_id'])
     if g.current_user == user:
         return bad_request('You cannot send private message to yourself.')
+    if user.is_blocking(g.current_user):
+        return bad_request('You are in the blacklist of {}'.format(user.name if user.name else user.username))
 
     message = Message()
     message.from_dict(json_data)

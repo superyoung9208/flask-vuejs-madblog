@@ -50,6 +50,13 @@ class PaginatedAPIMixin(object):
 
         return data
 
+blacklist = db.Table(
+    'blacklist',
+    db.Column('user_id',db.Integer,db.ForeignKey('users.id')),
+    db.Column('block_id',db.Integer,db.ForeignKey('users.id')),
+    db.Column('timestamp',db.DateTime,default=datetime.utcnow())
+)
+
 
 class User(PaginatedAPIMixin, db.Model):
     __tablename__ = 'users'
@@ -82,6 +89,12 @@ class User(PaginatedAPIMixin, db.Model):
     # 用户接收的私信
     messages_received = db.relationship('Message', foreign_keys='Message.recipient_id',
                                     backref='recipient', lazy='dynamic', cascade='all,delete-orphan')
+    # 骚扰者
+    harassers = db.relationship('User',secondary=blacklist,
+                                primaryjoin = (blacklist.c.user_id == id),
+                                secondaryjoin = (blacklist.c.block_id == id),
+                                backref = db.backref('sufferers',lazy='dynamic'),lazy='dynamic')
+
     last_messages_read_time = db.Column(db.DateTime) #最后一次读取私信时间
 
     def new_recived_messages(self)->int:
@@ -247,6 +260,19 @@ class User(PaginatedAPIMixin, db.Model):
         last_read_time = self.last_followeds_posts_read_time or datetime(1900, 0, 0)
         return self.followed_posts().filter(Post.timestamp > last_read_time).count()
 
+    def is_blocking(self,user)->bool:
+        """判断当前用户是否被拉黑"""
+        return self.harassers.filter(blacklist.c.block_id == user.id).count()>0
+
+    def block(self,user):
+        """当前用户拉黑一个用户"""
+        if not self.is_blocking(user):
+            self.harassers.append(user)
+
+    def unblock(self,user):
+        """解除拉黑一个用户"""
+        if self.is_blocking(user):
+            self.harassers.remove(user)
 
 class Post(PaginatedAPIMixin, db.Model):
     """文章模型类"""
