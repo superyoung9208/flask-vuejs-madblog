@@ -134,3 +134,36 @@ def get_post_comments(id):
         item['descendants'] = sorted(descendants, keys=itemgetter('timestamp'))
 
     return jsonify(data)
+
+
+@bp.route('/posts/<int:id>/like/', methods=["GET"])
+@token_auth.login_required
+def like_post(id):
+    """喜欢文章"""
+    post = Post.query.get_or_404(id)
+    post.liked_by(g.current_user)
+    db.session.add(post)
+    # 切记要先提交，先添加喜欢记录到数据库，因为 new_posts_likes() 会查询 posts_likes 关联表
+    db.session.commit()
+    # 添加收到的通知
+    post.author.add_notification('unread_posts_likes_count', post.author.new_posts_likes())
+    return jsonify({
+        'status':'success',
+        'message':'You are now liking this post.'
+    })
+
+@bp.route('/posts/<int:id>/unlike/', methods=["GET"])
+@token_auth.login_required
+def like_post(id):
+    """取消喜欢文章"""
+    post = Post.query.get_or_404(id)
+    post.unliked_by(g.current_user)
+    # 切记要先提交，先添加喜欢记录到数据库，因为 new_posts_likes() 会查询 posts_likes 关联表
+    db.session.add(post)
+    db.session.commit()
+    # 添加收到的通知
+    post.author.add_notification('unread_posts_likes_count', post.author.new_posts_likes())
+    return jsonify({
+        'status': 'success',
+        'message': 'You are now liking this post.'
+    })

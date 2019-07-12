@@ -49,12 +49,20 @@ class PaginatedAPIMixin(object):
         }
 
         return data
-
+# 黑名单
 blacklist = db.Table(
     'blacklist',
     db.Column('user_id',db.Integer,db.ForeignKey('users.id')),
     db.Column('block_id',db.Integer,db.ForeignKey('users.id')),
     db.Column('timestamp',db.DateTime,default=datetime.utcnow())
+)
+
+# 喜欢文章
+posts_likes = db.Table(
+    'posts_likes',
+    db.Column('user_id',db.Integer,db.ForeignKey('users.id')),
+    db.Column('post_id',db.Integer,db.ForeignKey('posts.id')),
+    db.Column('timestamp', db.DateTime, default=datetime.utcnow())
 )
 
 
@@ -77,6 +85,9 @@ class User(PaginatedAPIMixin, db.Model):
     last_likes_read_time = db.Column(db.DateTime)
     # 用户最后一次查看 关注的人的博客 页面的时间，用来判断哪些文章是新的
     last_followeds_posts_read_time = db.Column(db.DateTime)
+    # 用户最后一次查看 收到的文章被喜欢的时间,用来判断哪些喜欢是最新的
+    last_posts_likes_read_time = db.Column(db.DateTime)
+
     followeds = db.relationship('User', secondary=followers,
                                 primaryjoin=(followers.c.follower_id == id),
                                 secondaryjoin=(followers.c.followed_id == id),
@@ -255,6 +266,21 @@ class User(PaginatedAPIMixin, db.Model):
                     news_likes_count += 1
         return news_likes_count
 
+    def new_posts_likes(self)->int:
+        """用户收到的文章被喜欢的计数"""
+        last_read_time = self.last_posts_likes_read_time or datetime(1990,0,0)
+        new_likes_count = 0
+        # 查找到自己所有的被喜欢的文章
+        posts = self.posts.join(posts_likes).all()
+        for p in posts:
+            for u in p.likes:
+                if u!=self: # 用户自己喜欢的文章不用通知
+                    res = db.engine.execute("select * from posts_likes WHERE user_id={} and post_id={}".format(u.id,p.id))
+                    timestamp = datetime.strptime(list(res)[0][2],"%Y-%m-%d %H:%M:%S.%f" )
+                    if timestamp > last_read_time:
+                        new_likes_count += 1
+
+        return new_likes_count
     def new_follows(self):
         """关注者发布的文章记数"""
         last_read_time = self.last_followeds_posts_read_time or datetime(1900, 0, 0)
@@ -285,7 +311,8 @@ class Post(PaginatedAPIMixin, db.Model):
     views = db.Column(db.Integer, default=0)
     author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
     comments = db.relationship('Comment', backref='post', lazy='dynamic', cascade='all,delete-orphan')
-
+    # 喜欢博客的人和被喜欢的文章是多对多的关系,一个人可以喜欢多个文章,一个文章可以被多个人喜欢
+    likers = db.relationship('User',secondary = posts_likes,backref=db.backref('liked_posts',lazy='dynamic'),lazy = "dynamic")
     def __repr__(self):
         return "<POST{}>".format(self.title)
 
@@ -311,6 +338,19 @@ class Post(PaginatedAPIMixin, db.Model):
 
         return data
 
+    def is_liked_by(self,user):
+        """是否收藏过文章"""
+        return user in self.likers
+
+    def liked_by(self,user):
+        """收藏文章"""
+        if not self.is_liked_by(user):
+            self.likers.append(user)
+
+    def unliked_by(self,user):
+        """取消收藏文章"""
+        if self.is_liked_by(user):
+            self.likers.remove(user)
 
 # 评论点赞
 comments_likes = db.Table(
