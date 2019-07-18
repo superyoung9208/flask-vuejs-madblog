@@ -3,9 +3,10 @@ File:test_user_model.py
 Author:Young
 """
 import unittest
-from app import create_app, db
+from app import create_app
 from app.models import User
 from tests import TestConfig
+from app.extensions import db
 
 
 class UserModelTestCase(unittest.TestCase):

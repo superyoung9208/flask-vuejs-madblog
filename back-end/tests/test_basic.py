@@ -4,8 +4,9 @@ Author:Young
 """
 import unittest
 from flask import current_app
-from app import create_app, db
+from app import create_app
 from tests import TestConfig
+from app.extensions import db
 
 
 class BasicsTestCase(unittest.TestCase):

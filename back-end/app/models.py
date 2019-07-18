@@ -11,7 +11,7 @@ import jwt
 from flask import current_app
 from flask import url_for
 
-from . import db
+from app.extensions import db
 from werkzeug.security import check_password_hash, generate_password_hash
 
 followers = db.Table(
@@ -49,19 +49,21 @@ class PaginatedAPIMixin(object):
         }
 
         return data
+
+
 # 黑名单
 blacklist = db.Table(
     'blacklist',
-    db.Column('user_id',db.Integer,db.ForeignKey('users.id')),
-    db.Column('block_id',db.Integer,db.ForeignKey('users.id')),
-    db.Column('timestamp',db.DateTime,default=datetime.utcnow())
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id')),
+    db.Column('block_id', db.Integer, db.ForeignKey('users.id')),
+    db.Column('timestamp', db.DateTime, default=datetime.utcnow())
 )
 
 # 喜欢文章
 posts_likes = db.Table(
     'posts_likes',
-    db.Column('user_id',db.Integer,db.ForeignKey('users.id')),
-    db.Column('post_id',db.Integer,db.ForeignKey('posts.id')),
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id')),
+    db.Column('post_id', db.Integer, db.ForeignKey('posts.id')),
     db.Column('timestamp', db.DateTime, default=datetime.utcnow())
 )
 
@@ -76,6 +78,7 @@ class User(PaginatedAPIMixin, db.Model):
     location = db.Column(db.String(64))
     about_me = db.Column(db.Text())
     member_since = db.Column(db.DateTime(), default=datetime.utcnow)
+    confirmed = db.Column(db.Boolean, default=False)  # 确认邮箱
     last_seen = db.Column(db.DateTime(), default=datetime.utcnow)
     posts = db.relationship('Post', backref='author', cascade='all,delete-orphan', lazy='dynamic')
     last_recived_comments_read_time = db.Column(db.DateTime)  # 最后一次收到评论的时间
@@ -87,30 +90,30 @@ class User(PaginatedAPIMixin, db.Model):
     last_followeds_posts_read_time = db.Column(db.DateTime)
     # 用户最后一次查看 收到的文章被喜欢的时间,用来判断哪些喜欢是最新的
     last_posts_likes_read_time = db.Column(db.DateTime)
-
+    # 用户的关注
     followeds = db.relationship('User', secondary=followers,
                                 primaryjoin=(followers.c.follower_id == id),
                                 secondaryjoin=(followers.c.followed_id == id),
                                 backref=db.backref('followers', lazy='dynamic'), lazy='dynamic')
-
+    # 关联的通知
     notifications = db.relationship('Nocification', backref='user', lazy='dynamic', cascade='all,delete-orphan')
     # 用户发送的私信
     messages_sent = db.relationship('Message', foreign_keys='Message.sender_id',
                                     backref='sender', lazy='dynamic', cascade='all,delete-orphan')
     # 用户接收的私信
     messages_received = db.relationship('Message', foreign_keys='Message.recipient_id',
-                                    backref='recipient', lazy='dynamic', cascade='all,delete-orphan')
+                                        backref='recipient', lazy='dynamic', cascade='all,delete-orphan')
     # 骚扰者
-    harassers = db.relationship('User',secondary=blacklist,
-                                primaryjoin = (blacklist.c.user_id == id),
-                                secondaryjoin = (blacklist.c.block_id == id),
-                                backref = db.backref('sufferers',lazy='dynamic'),lazy='dynamic')
+    harassers = db.relationship('User', secondary=blacklist,
+                                primaryjoin=(blacklist.c.user_id == id),
+                                secondaryjoin=(blacklist.c.block_id == id),
+                                backref=db.backref('sufferers', lazy='dynamic'), lazy='dynamic')
 
-    last_messages_read_time = db.Column(db.DateTime) #最后一次读取私信时间
+    last_messages_read_time = db.Column(db.DateTime)  # 最后一次读取私信时间
 
-    def new_recived_messages(self)->int:
+    def new_recived_messages(self) -> int:
         """最新未读的私信个数"""
-        last_read_time = self.last_messages_read_time or datetime(1900,0,0)
+        last_read_time = self.last_messages_read_time or datetime(1900, 0, 0)
 
         return Message.query.filter_by(recipient=self).filter(
             Message.timestamp > last_read_time).count()
@@ -236,8 +239,8 @@ class User(PaginatedAPIMixin, db.Model):
 
     def new_recived_messages(self):
         """用户未读私信计数"""
-        last_read_time = self.last_messages_read_time or datetime(1900,0,0)
-        return Message.query.filter_by(Message.recipient==self).filter(Message.timestamp>last_read_time).count()
+        last_read_time = self.last_messages_read_time or datetime(1900, 0, 0)
+        return Message.query.filter_by(Message.recipient == self).filter(Message.timestamp > last_read_time).count()
 
     def add_notification(self, name, data):
         """为用户添加一个通知"""
@@ -266,39 +269,85 @@ class User(PaginatedAPIMixin, db.Model):
                     news_likes_count += 1
         return news_likes_count
 
-    def new_posts_likes(self)->int:
+    def new_posts_likes(self) -> int:
         """用户收到的文章被喜欢的计数"""
-        last_read_time = self.last_posts_likes_read_time or datetime(1990,0,0)
+        last_read_time = self.last_posts_likes_read_time or datetime(1990, 0, 0)
         new_likes_count = 0
         # 查找到自己所有的被喜欢的文章
         posts = self.posts.join(posts_likes).all()
         for p in posts:
             for u in p.likes:
-                if u!=self: # 用户自己喜欢的文章不用通知
-                    res = db.engine.execute("select * from posts_likes WHERE user_id={} and post_id={}".format(u.id,p.id))
-                    timestamp = datetime.strptime(list(res)[0][2],"%Y-%m-%d %H:%M:%S.%f" )
+                if u != self:  # 用户自己喜欢的文章不用通知
+                    res = db.engine.execute(
+                        "select * from posts_likes WHERE user_id={} and post_id={}".format(u.id, p.id))
+                    timestamp = datetime.strptime(list(res)[0][2], "%Y-%m-%d %H:%M:%S.%f")
                     if timestamp > last_read_time:
                         new_likes_count += 1
 
         return new_likes_count
+
     def new_follows(self):
         """关注者发布的文章记数"""
         last_read_time = self.last_followeds_posts_read_time or datetime(1900, 0, 0)
         return self.followed_posts().filter(Post.timestamp > last_read_time).count()
 
-    def is_blocking(self,user)->bool:
+    def is_blocking(self, user) -> bool:
         """判断当前用户是否被拉黑"""
-        return self.harassers.filter(blacklist.c.block_id == user.id).count()>0
+        return self.harassers.filter(blacklist.c.block_id == user.id).count() > 0
 
-    def block(self,user):
+    def block(self, user):
         """当前用户拉黑一个用户"""
         if not self.is_blocking(user):
             self.harassers.append(user)
 
-    def unblock(self,user):
+    def unblock(self, user):
         """解除拉黑一个用户"""
         if self.is_blocking(user):
             self.harassers.remove(user)
+
+    def generate_confirmed_jwt(self, expires_in=3600):
+        """生成验证token"""
+        now = datetime.utcnow()
+        payload = {
+            "confirm": self.id,
+            'exp': now + timedelta(seconds=expires_in),
+            'iat': now
+        }
+        return jwt.encode(payload, current_app.config['SECRET_KEY'], algorithm='HS256').decode('utf-8')
+
+    def verify_confirm_jwt(self, token):
+        """验证邮箱token"""
+        try:
+            payload = jwt.decode(token, current_app.config['SECRET_KEY'], algorithm='HS256')
+        except (jwt.ExpiredSignatureError, jwt.exceptions.DecodeError, jwt.exceptions.InvalidSignatureError):
+            # 验证未通过,过期或者token被篡改
+            return False
+        if payload.get("confirm") != self.id:
+            return False
+        self.confirmed = True
+        db.session.add(self)
+        return True
+
+    def generate_reset_password_jwt(self, expires_in=3600):
+        """
+        生成重置密码的验证token
+        :return jwttoken
+        """
+        now = datetime.utcnow()
+        payload = {
+            "reset_password": self.id,
+            'exp': now + expires_in,
+            'iat': now
+        }
+        return jwt.encode(payload,current_app.config["SECRET_KEY"],algorithm='HS256').decode('utf-8')
+
+    def verify_reset_password_jwt(self,token):
+        try:
+            payload = jwt.decode(token,current_app.config["SECRET_KEY"],algorithm='HS256')
+        except (jwt.exceptions.InvalidTokenError,jwt.exceptions.InvalidSignatureError,jwt.exceptions.ExpiredSignatureError) as e:
+            return None
+
+        return User.query.get(payload.get("reset_password"))
 
 class Post(PaginatedAPIMixin, db.Model):
     """文章模型类"""
@@ -312,7 +361,9 @@ class Post(PaginatedAPIMixin, db.Model):
     author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
     comments = db.relationship('Comment', backref='post', lazy='dynamic', cascade='all,delete-orphan')
     # 喜欢博客的人和被喜欢的文章是多对多的关系,一个人可以喜欢多个文章,一个文章可以被多个人喜欢
-    likers = db.relationship('User',secondary = posts_likes,backref=db.backref('liked_posts',lazy='dynamic'),lazy = "dynamic")
+    likers = db.relationship('User', secondary=posts_likes, backref=db.backref('liked_posts', lazy='dynamic'),
+                             lazy="dynamic")
+
     def __repr__(self):
         return "<POST{}>".format(self.title)
 
@@ -338,19 +389,20 @@ class Post(PaginatedAPIMixin, db.Model):
 
         return data
 
-    def is_liked_by(self,user):
+    def is_liked_by(self, user):
         """是否收藏过文章"""
         return user in self.likers
 
-    def liked_by(self,user):
+    def liked_by(self, user):
         """收藏文章"""
         if not self.is_liked_by(user):
             self.likers.append(user)
 
-    def unliked_by(self,user):
+    def unliked_by(self, user):
         """取消收藏文章"""
         if self.is_liked_by(user):
             self.likers.remove(user)
+
 
 # 评论点赞
 comments_likes = db.Table(

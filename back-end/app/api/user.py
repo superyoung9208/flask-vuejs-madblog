@@ -14,6 +14,7 @@ from app import db
 from app.api.auth import token_auth
 from app.api.error import bad_request, error_response
 from app.models import User, Post, Comment, Notification, Message, posts_likes
+from utils.email import send_email
 from . import bp
 
 
@@ -50,6 +51,38 @@ def create_user():
 
     db.session.add(user)
     db.session.commit()  # 保存至数据库
+
+    token = user.generate_confirmed_jwt()
+    if not json_data.get('confirm_email_base_url'):
+        confirm_url = 'http://127.0.0.1:5000/api/confirm/' + token
+    else:
+        confirm_url = json_data.get('confirm_email_base_url')
+
+    text_body = '''
+        Dear {},
+        Welcome to Madblog!
+        To confirm your account please click on the following link: {}
+        Sincerely,
+        The Madblog Team
+        Note: replies to this email address are not monitored.
+        '''.format(user.username, confirm_url)
+
+    html_body = '''
+        <p>Dear {0},</p>
+        <p>Welcome to <b>Madblog</b>!</p>
+        <p>To confirm your account please <a href="{1}">click here</a>.</p>
+        <p>Alternatively, you can paste the following link in your browser's address bar:</p>
+        <p><b>{1}</b></p>
+        <p>Sincerely,</p>
+        <p>The Madblog Team</p>
+        <p><small>Note: replies to this email address are not monitored.</small></p>
+        '''.format(user.username, confirm_url)
+
+    send_email('[Madblog] Confirm Your Account',
+               sender=current_app.config['MAIL_SENDER'],
+               recipients=[user.email],
+               text_body=text_body,
+               html_body=html_body)
 
     response = jsonify(user.to_dict())
     response.status_code = 201
@@ -465,20 +498,20 @@ def get_user_recived_posts_likes(id):
                 data = dict()
                 data["user"] = u.to_dict()
                 data['post'] = p.to_dict()
-                res = db.engine.execute("select * from posts_likes where user_id={} and post_id={}".format(u.id,p.id))
-                data["timestamp"] = datetime.strptime(list(res)[0][2],"%Y-%m-%d %H:%M:%S.%f")
-                last_read_time = user.last_posts_likes_read_time or datetime(1900,0,0)
-                if data["timestamp"]>last_read_time:
+                res = db.engine.execute("select * from posts_likes where user_id={} and post_id={}".format(u.id, p.id))
+                data["timestamp"] = datetime.strptime(list(res)[0][2], "%Y-%m-%d %H:%M:%S.%f")
+                last_read_time = user.last_posts_likes_read_time or datetime(1900, 0, 0)
+                if data["timestamp"] > last_read_time:
                     data["is_new"] = True
                 records['items'].append(data)
-    records['items']= sorted(records['items'],key=itemgetter('timestamp'),reverse=True)
+    records['items'] = sorted(records['items'], key=itemgetter('timestamp'), reverse=True)
     user.last_posts_likes_read_time = datetime.utcnow()
     user.add_notification('unread_posts_likes_count', 0)
     db.session.commit()
     return jsonify(records)
 
 
-@bp.route('/users/<int:id>/liked-posts/', methodes=["GET"])
+@bp.route('/users/<int:id>/liked-posts/', methods=["GET"])
 @token_auth.login_required
 def get_user_liked_posts(id):
     """返回用户收藏的文章"""
@@ -487,6 +520,100 @@ def get_user_liked_posts(id):
         return error_response(403)
     page = request.args.get('page', 1, type=int)
     per_page = min(request.args.get('per_page', current_app.config['POSTS_PER_PAGE'], type=int), 100)
-    data = Post.to_collection_dict(user.liked_posts.order_by(Post.timestamp.desc()),page,per_page,'api.get_user_liked_posts',id=id)
+    data = Post.to_collection_dict(user.liked_posts.order_by(Post.timestamp.desc()), page, per_page,
+                                   'api.get_user_liked_posts', id=id)
 
     return jsonify(data)
+
+
+@bp.route('/confirm/<token>', methods=["POST"])
+@token_auth.login_required
+def confirm(token):
+    """确认邮箱是有效的"""
+    if g.current_user.confirmed:
+        return bad_request('You have already confirmed your account.')
+    if g.current_user.verify_confirm_jwt(token):
+        g.current_user.ping()
+        db.session.commit()
+        token = g.current_user.get_jwt()
+        return jsonify({
+            'status': 'success',
+            'message': 'You have confirmed your account. Thanks!',
+            'token': token
+        })
+    else:
+        return bad_request('The confirmation link is invalid or has expired.')
+
+
+@bp.route('reset-password-request', methods=["POST"])
+@token_auth.login_required
+def reset_password_request():
+    """请求重置密码,需要填写时的邮箱"""
+    json_data = request.json
+    if not json_data:
+        return bad_request("You must post Json data")
+    message = {}
+
+    if 'confirm_email_base_url' not in json_data.get('confirm_email_base_url').strip():
+        message['confirm_email_base_url'] = "Plase provide a valid confirm email base url"
+    pattern = '^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$'
+    if 'email' not in json_data and re.match(pattern, json_data.get('email')):
+        message['email'] = "Please provide a valid email address."
+
+    if message:
+        return bad_request(message)
+
+    user = User.query.filter_by(email=json_data.get('email')).first()
+    if g.current_user != user:
+        return bad_request("Please provide a valid email address")
+    if user:
+        token = user.generate_reset_password_jwt()
+        text_body = '''
+                Dear {0},
+                To reset your password click on the following link: {1}
+                If you have not requested a password reset simply ignore this message.
+                Sincerely,
+                The Madblog Team
+                Note: replies to this email address are not monitored.
+                '''.format(user.username, json_data.get('confirm_email_base_url') + token)
+        html_body = '''
+                <p>Dear {0},</p>
+                <p>To reset your password <a href="{1}">click here</a>.</p>
+                <p>Alternatively, you can paste the following link in your browser's address bar:</p>
+                <p><b>{1}</b></p>
+                <p>If you have not requested a password reset simply ignore this message.</p>
+                <p>Sincerely,</p>
+                <p>The Madblog Team</p>
+                <p><small>Note: replies to this email address are not monitored.</small></p>
+                '''.format(user.username, json_data.get('confirm_email_base_url') + token)
+
+        send_email('[Madblog] Reset Your Password', sender=current_app.config['MAIL_SENDER']
+                   , recipients=[user.username], text_body=text_body, html_body=html_body)
+
+        return jsonify({
+            'status': 'success',
+            'message': 'An email with instructions to reset your password has been sent to you.'
+        })
+
+
+@bp.route('/reset-password/<token>', methods=["POST"])
+@token_auth.login_required
+def reset_password(token):
+    '''用户点击邮件中的链接，通过验证 JWT 来重置对应的账户的密码'''
+    json_data = request.json
+    if not json_data:
+        return bad_request('You must post JSON data.')
+    if 'password' not in json_data:
+        return bad_request('Please provide a valid password')
+
+    user = User.verify_reset_password_jwt(token)
+    if not user:
+        return bad_request('The reset password link is invalid or has expired.')
+
+    user.password = json_data.get('password')
+    db.session.commit()
+
+    return jsonify({
+        'status': 'success',
+        'message': 'You password has been reset.'
+    })

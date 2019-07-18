@@ -154,7 +154,7 @@ def like_post(id):
 
 @bp.route('/posts/<int:id>/unlike/', methods=["GET"])
 @token_auth.login_required
-def like_post(id):
+def unlike_post(id):
     """取消喜欢文章"""
     post = Post.query.get_or_404(id)
     post.unliked_by(g.current_user)

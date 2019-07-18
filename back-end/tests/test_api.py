@@ -7,7 +7,8 @@ from base64 import b64encode
 from app.models import User
 from . import TestConfig
 import unittest,re
-from app import create_app, db
+from app import create_app
+from app.extensions import db
 
 
 class ApiTestCase(unittest.TestCase):
