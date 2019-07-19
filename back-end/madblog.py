@@ -20,12 +20,11 @@ app = create_app()
 @app.shell_context_processor
 def make_shell_context():
     return {'db': db, 'Role': Role, 'User': User, 'Post': Post, 'Comment': Comment,
-            'Notification': Notification, 'Message': Message,'Permission':Permission}
+            'Notification': Notification, 'Message': Message, 'Permission': Permission}
+
 
 manager = Manager(app)
-manager.add_command('db',MigrateCommand)
-
+manager.add_command('db', MigrateCommand)
 
 if __name__ == '__main__':
     manager.run()
-

@@ -689,6 +689,25 @@ class Role(PaginatedAPIMixin, db.Model):
         new_p = (i[1] for i in p if self.has_permission(i[0]))
         return ",".join(new_p)
 
+    def to_dict(self):
+        """序列化输出"""
+        data = {
+            'id': self.id,
+            'slug': self.slug,
+            'name': self.name,
+            'default': self.default,
+            'permissions': self.permissions,
+            '_links': {
+                'self': url_for('api.get_role', id=self.id)
+            }
+        }
+        return data
+
+    def from_dict(self, data):
+        for field in ['slug', 'name', 'permissions']:
+            if field in data:
+                setattr(self, field, data[field])
+
     def __str__(self):
         return self.name
 
