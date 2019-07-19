@@ -8,9 +8,10 @@ from flask import request
 from flask import url_for
 
 from app import db
-from app.models import Comment, Post
+from app.models import Comment, Post, Permission
 from app.api.auth import token_auth
 from app.api.error import bad_request, error_response
+from utils.decorator import permission_required
 from . import bp
 
 # 定义restful接口
@@ -24,6 +25,7 @@ from . import bp
 
 @bp.route('/comments/',methods=["POST"])
 @token_auth.login_required
+@permission_required(Permission.COMMENT)
 def create_comment():
     """发布一条评论"""
     json_data = request.json
@@ -98,7 +100,7 @@ def update_comment(id):
 def delete_comment(id):
     """删除单个评论"""
     comment = Comment.query.get_or_404(id)
-    if g.current_user != comment.author and g.current_user != comment.post.author:
+    if g.current_user != comment.author and g.current_user != comment.post.author and not g.current_user.can(Permission.ADMIN):
         return error_response(403)
 
     # 获取当前评论所有的祖先评论的作者
@@ -120,6 +122,7 @@ def delete_comment(id):
 
 @bp.route('/comments/<int:id>/like',methods=["GET"])
 @token_auth.login_required
+@permission_required(Permission.COMMENT)
 def like_comment(id):
     """点赞一个评论"""
     comment = Comment.query.get_or_404(id)
@@ -134,6 +137,7 @@ def like_comment(id):
 
 @bp.route('/comments/<int:id>/unlike',methods=["GET"])
 @token_auth.login_required
+@permission_required(Permission.COMMENT)
 def unlike_comment(id):
     """取消一个评论的点赞"""
     comment = Comment.query.get_or_404(id)

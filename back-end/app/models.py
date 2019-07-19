@@ -2,6 +2,7 @@
 File:models.py
 Author:laoyang
 """
+import base64
 import json
 from _md5 import md5
 
@@ -78,6 +79,7 @@ class User(PaginatedAPIMixin, db.Model):
     location = db.Column(db.String(64))
     about_me = db.Column(db.Text())
     member_since = db.Column(db.DateTime(), default=datetime.utcnow)
+    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'))
     confirmed = db.Column(db.Boolean, default=False)  # 确认邮箱
     last_seen = db.Column(db.DateTime(), default=datetime.utcnow)
     posts = db.relationship('Post', backref='author', cascade='all,delete-orphan', lazy='dynamic')
@@ -96,7 +98,7 @@ class User(PaginatedAPIMixin, db.Model):
                                 secondaryjoin=(followers.c.followed_id == id),
                                 backref=db.backref('followers', lazy='dynamic'), lazy='dynamic')
     # 关联的通知
-    notifications = db.relationship('Nocification', backref='user', lazy='dynamic', cascade='all,delete-orphan')
+    notifications = db.relationship('Notification', backref='user', lazy='dynamic', cascade='all,delete-orphan')
     # 用户发送的私信
     messages_sent = db.relationship('Message', foreign_keys='Message.sender_id',
                                     backref='sender', lazy='dynamic', cascade='all,delete-orphan')
@@ -180,18 +182,27 @@ class User(PaginatedAPIMixin, db.Model):
 
     def from_dict(self, data, new_user=False):
         # 接收前段json数据并执行反序列化
-        for field in ['username', 'email']:
+        for field in ['username', 'email', 'name', 'location', 'about_me']:
             if field in data:
                 setattr(self, field, data[field])
         if new_user and 'password' in data:
             self.password = data['password']
+            if self.role is None:
+                if self.email in current_app.config['ADMINS']:
+                    self.role = Role.query.filter_by(slug='administrator').first()
+                else:
+                    self.role = Role.query.filter_by(default=True).first()
 
     def get_token(self, expires_in=600):
         # 获取当前时间
         now = datetime.utcnow()
         payload = {
             'user_id': self.id,
-            'name': self.name if self.name else self.username,
+            'user_name': self.name if self.name else self.username,
+            'user_avatar': base64.b64encode(self.avatar(24).
+                                            encode('utf-8')).decode('utf-8'),
+            'confirmed': self.confirmed,
+            'permissions': self.role.get_permissions(),
             'exp': now + timedelta(seconds=expires_in),
             'iat': now
         }
@@ -339,15 +350,25 @@ class User(PaginatedAPIMixin, db.Model):
             'exp': now + expires_in,
             'iat': now
         }
-        return jwt.encode(payload,current_app.config["SECRET_KEY"],algorithm='HS256').decode('utf-8')
+        return jwt.encode(payload, current_app.config["SECRET_KEY"], algorithm='HS256').decode('utf-8')
 
-    def verify_reset_password_jwt(self,token):
+    def verify_reset_password_jwt(self, token):
         try:
-            payload = jwt.decode(token,current_app.config["SECRET_KEY"],algorithm='HS256')
-        except (jwt.exceptions.InvalidTokenError,jwt.exceptions.InvalidSignatureError,jwt.exceptions.ExpiredSignatureError) as e:
+            payload = jwt.decode(token, current_app.config["SECRET_KEY"], algorithm='HS256')
+        except (jwt.exceptions.InvalidTokenError, jwt.exceptions.InvalidSignatureError,
+                jwt.exceptions.ExpiredSignatureError) as e:
             return None
 
         return User.query.get(payload.get("reset_password"))
+
+    def can(self, perm):
+        """检查用户是否具有某个权限"""
+        return self.role is not None and self.role.has_permission(perm)
+
+    def is_administartor(self):
+        """检查是否是管理员权限"""
+        return self.can(Permission.ADMIN)
+
 
 class Post(PaginatedAPIMixin, db.Model):
     """文章模型类"""
@@ -590,3 +611,86 @@ class Message(PaginatedAPIMixin, db.Model):
         for filed in ['body', 'timestamp']:
             if filed in data:
                 setattr(self, filed, data[filed])
+
+
+class Permission(object):
+    """权限认证中的各种操作，对应二进制的位，比如
+       FOLLOW: 0b00000001，转换为十六进制为 0x01
+       COMMENT: 0b00000010，转换为十六进制为 0x02
+       WRITE: 0b00000100，转换为十六进制为 0x04
+       ...
+       ADMIN: 0b10000000，转换为十六进制为 0x80
+
+       中间还预留了第 4、5、6、7 共4位二进制位，以备后续增加操作权限"""
+    FOLLOW = 0x01  # 关注权限
+    COMMENT = 0x02  # 发布评论,点赞,权限
+    WRITE = 0x04  # 撰写文章的权限
+    ADMIN = 0x80  # 管理者权限
+
+
+class Role(PaginatedAPIMixin, db.Model):
+    """角色表"""
+    __tablename__ = 'roles'
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(255), unique=True)
+    name = db.Column(db.String(255))  # 角色表
+    default = db.Column(db.Boolean, default=False, index=True)  # 是否是默认角色
+    permissions = db.Column(db.Integer)  # 角色拥有的权限，各操作对应一个二进制位，能执行某项操作的角色，其位会被设为 1
+    users = db.relationship('User', backref='role', lazy='dynamic')
+
+    def __init__(self, **kwargs):
+        super(Role, self).__init__(**kwargs)
+        if self.permissions is None:
+            self.permissions = 0
+
+    @staticmethod
+    def insert_roles():
+        roles = {
+            'shutup': ('小黑屋', ()),
+            'reader': ('读者', (Permission.FOLLOW, Permission.COMMENT)),
+            'author': ('作者', (Permission.FOLLOW, Permission.COMMENT, Permission.WRITE)),
+            'administrator': ('管理员', (Permission.FOLLOW, Permission.COMMENT, Permission.WRITE, Permission.ADMIN))
+        }
+        default_role = 'reader'
+        for r in roles:
+            role = Role.query.filter_by(slug=r).first()
+            if role is None:
+                role = Role(slug=r, name=roles[r][0])
+            role.reset_permission()
+            for perm in roles[r][1]:
+                role.add_permission(perm)
+            role.default = (role.slug == default_role)
+            db.session.add(role)
+        db.session.commit()
+
+    def reset_permission(self):
+        """重置权限"""
+        self.permissions = 0
+
+    def has_permission(self, perm) -> bool:
+        """是否存在此权限"""
+        return self.permissions & perm == perm
+
+    def add_permission(self, perm):
+        """添加权限"""
+        if not self.has_permission(perm):
+            self.permissions += perm
+
+    def remove_permission(self, perm):
+        """删除权限"""
+        if self.has_permission(perm):
+            self.permissions -= perm
+
+    def get_permissions(self):
+        """获取角色具体权限操作"""
+        p = [(Permission.FOLLOW, 'follow'), (Permission.ADMIN, 'administrator'), (Permission.WRITE, 'author'),
+             (Permission.COMMENT, 'reader')]
+
+        new_p = (i[1] for i in p if self.has_permission(i[0]))
+        return ",".join(new_p)
+
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return '<Role {}>'.format(self.name)

@@ -11,8 +11,9 @@ from flask import url_for
 from app import db
 from app.api.auth import token_auth
 from app.api.error import bad_request, error_response
-from app.models import Post, Comment
+from app.models import Post, Comment, Permission
 from . import bp
+from utils.decorator import permission_required
 
 
 # RestfulApi 设计
@@ -34,6 +35,7 @@ def get_posts():
 
 @bp.route('/posts/', methods=["POST"])
 @token_auth.login_required
+@permission_required(Permission.WRITE)
 def create_post():
     """创建一篇文章"""
     json_data = request.json
@@ -108,9 +110,14 @@ def update_post(id):
 def delete_post(id):
     """删除一篇文章"""
     post = Post.query.get_or_404(id)
-    if post.id != g.current_user.id:
+    if post.id != g.current_user.id and not g.current_user.can(Permission.ADMIN):  # 管理员也可以删除文章
         return error_response(403)
     db.session.delete(post)
+
+    for user in post.author.followers:
+        user.add_notification('unread_followeds_posts_count',
+                              user.new_followeds_posts())
+
     db.session.commit()
 
     return "", 204
@@ -148,9 +155,10 @@ def like_post(id):
     # 添加收到的通知
     post.author.add_notification('unread_posts_likes_count', post.author.new_posts_likes())
     return jsonify({
-        'status':'success',
-        'message':'You are now liking this post.'
+        'status': 'success',
+        'message': 'You are now liking this post.'
     })
+
 
 @bp.route('/posts/<int:id>/unlike/', methods=["GET"])
 @token_auth.login_required

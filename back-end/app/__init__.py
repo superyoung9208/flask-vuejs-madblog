@@ -8,7 +8,6 @@ from config import Config
 from app.api import bp as api_bp
 
 
-
 def create_app(config_class=Config):
     """定义app的工厂方法, 给flask_app添加功能"""
     app = Flask(__name__)

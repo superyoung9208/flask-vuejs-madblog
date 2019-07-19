@@ -13,8 +13,9 @@ from flask import request, jsonify, url_for
 from app import db
 from app.api.auth import token_auth
 from app.api.error import bad_request, error_response
-from app.models import User, Post, Comment, Notification, Message, posts_likes
+from app.models import User, Post, Comment, Notification, Message, posts_likes, Permission
 from utils.email import send_email
+from utils.decorator import permission_required
 from . import bp
 
 
@@ -153,7 +154,13 @@ def update_user(id):
 @bp.route('/users/<int:id>', methods=['DELETE'])
 def delete_user(id):
     """修改单个用户"""
-    pass
+    user = User.query.get_or_404(id)
+    if g.current_user != user and not g.current_user.can(Permission.ADMIN):
+        error_response(403)
+    db.session.delete(user)
+    db.session.commit()
+
+    return '',204
 
 
 # 用户关注接口设计
@@ -166,6 +173,7 @@ def delete_user(id):
 
 @bp.route('/follow/<int:id>', methods=['GET'])
 @token_auth.login_required
+@permission_required(Permission.FOLLOW)
 def follow(id):
     """关注用户一个用户"""
     user = User.query.get_or_404(id)
@@ -183,6 +191,7 @@ def follow(id):
 
 @bp.route('/unfollow/<int:id>', methods=['GET'])
 @token_auth.login_required
+@permission_required(Permission.FOLLOW)
 def unfollow(id):
     """取消关注一个用户"""
     user = User.query.get_or_404(id)
@@ -426,6 +435,7 @@ def get_user_history_messages(id):
 
 @bp.route('/block/<int:id>', methods=["GET"])
 @token_auth.login_required
+@permission_required(Permission.FOLLOW)
 def block(id):
     """拉黑一个用户"""
     user = User.query.get_or_404(id)
@@ -445,6 +455,7 @@ def block(id):
 
 @bp.route('/block/<int:id>', methods=["GET"])
 @token_auth.login_required
+@permission_required(Permission.FOLLOW)
 def unblock(id):
     """解除拉黑一个用户"""
     user = User.query.get_or_404(id)
