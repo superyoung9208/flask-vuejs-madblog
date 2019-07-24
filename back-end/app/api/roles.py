@@ -2,15 +2,15 @@
 File:roles.py
 Author:laoyang
 """
-from flask import current_app, jsonify
+from flask import jsonify
 from flask import request
 from flask import url_for
 
-from app.extensions import db
 from app.api.auth import token_auth
 from app.api.error import bad_request
+from app.extensions import db
 from app.models import Role
-from utils.decorator import admin_required
+from app.utils.decorator import admin_required
 from . import bp
 
 

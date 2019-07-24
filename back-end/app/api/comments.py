@@ -8,11 +8,12 @@ from flask import request
 from flask import url_for
 
 from app import db
-from app.models import Comment, Post, Permission
 from app.api.auth import token_auth
 from app.api.error import bad_request, error_response
-from utils.decorator import permission_required
+from app.models import Comment, Post, Permission
+from app.utils.decorator import permission_required
 from . import bp
+
 
 # 定义restful接口
 # 发表评论 POST /api/comments/

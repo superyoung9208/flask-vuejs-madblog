@@ -69,6 +69,42 @@ posts_likes = db.Table(
 )
 
 
+class Task(PaginatedAPIMixin, db.Model):
+    """后台任务"""
+    __tablename__ = 'tasks'
+    id = db.Column(db.String(36), primary_key=True)  # 不适用数值id,而是使用rq为每个任务生成的字符串id
+    # 任务名
+    name = db.Column(db.String(128), index=True)
+    # 任务描述
+    description = db.Column(db.String(128))
+    # 任务所属用户
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    # 是否执行完成
+    complate = db.Column(db.Boolean, default=False)
+
+    def get_progress(self):
+        """获取实时进度"""
+        try:
+            rq_job = current_app.task_queue.fetch_job(self.id)
+        except Exception as e:
+            rq_job = None
+        return rq_job.meta.get('progress', 0) if rq_job is not None else 100
+
+    def to_dict(self):
+        data = {
+            'id':self.id,
+            'name':self.name,
+            'description':self.description,
+            'progress':self.get_progress(),
+            'complate':self.complate,
+            '_links': url_for('api.get_user',id=self.user_id)
+        }
+        return data
+
+    def __repr__(self):
+        return '<Task {}>'.format(self.id)
+
+
 class User(PaginatedAPIMixin, db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
@@ -92,6 +128,7 @@ class User(PaginatedAPIMixin, db.Model):
     last_followeds_posts_read_time = db.Column(db.DateTime)
     # 用户最后一次查看 收到的文章被喜欢的时间,用来判断哪些喜欢是最新的
     last_posts_likes_read_time = db.Column(db.DateTime)
+    last_messages_read_time = db.Column(db.DateTime)  # 最后一次读取私信时间
     # 用户的关注
     followeds = db.relationship('User', secondary=followers,
                                 primaryjoin=(followers.c.follower_id == id),
@@ -110,8 +147,8 @@ class User(PaginatedAPIMixin, db.Model):
                                 primaryjoin=(blacklist.c.user_id == id),
                                 secondaryjoin=(blacklist.c.block_id == id),
                                 backref=db.backref('sufferers', lazy='dynamic'), lazy='dynamic')
-
-    last_messages_read_time = db.Column(db.DateTime)  # 最后一次读取私信时间
+    # 用户的后台任务
+    tasks = db.relationship('Task', backref='user', lazy='dynamic')
 
     def new_recived_messages(self) -> int:
         """最新未读的私信个数"""
@@ -368,6 +405,17 @@ class User(PaginatedAPIMixin, db.Model):
     def is_administartor(self):
         """检查是否是管理员权限"""
         return self.can(Permission.ADMIN)
+
+    def get_task_in_process(self, name):
+        """获取正在运行的任务"""
+        return Task.query.filter_by(name=name, user=self, compile=False)
+
+    def lanuch_tasks(self, name, description, *args, **kwargs):
+        """用户发布一个任务"""
+        rq_job = current_app.task_queue.enqueue('app.utils.tasks.' + name, *args, **kwargs)
+        task = Task(id=rq_job.get_id(), name=name, description=description, user=self)
+        db.session.add()
+        return task
 
 
 class Post(PaginatedAPIMixin, db.Model):

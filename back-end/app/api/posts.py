@@ -12,8 +12,8 @@ from app import db
 from app.api.auth import token_auth
 from app.api.error import bad_request, error_response
 from app.models import Post, Comment, Permission
+from app.utils.decorator import permission_required
 from . import bp
-from utils.decorator import permission_required
 
 
 # RestfulApi 设计

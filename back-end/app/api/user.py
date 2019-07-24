@@ -13,9 +13,9 @@ from flask import request, jsonify, url_for
 from app import db
 from app.api.auth import token_auth
 from app.api.error import bad_request, error_response
-from app.models import User, Post, Comment, Notification, Message, posts_likes, Permission
-from utils.email import send_email
-from utils.decorator import permission_required
+from app.models import User, Post, Comment, Notification, Message, posts_likes, Permission, Task
+from app.utils.decorator import permission_required, admin_required
+from app.utils.email import send_email
 from . import bp
 
 
@@ -628,3 +628,33 @@ def reset_password(token):
         'status': 'success',
         'message': 'You password has been reset.'
     })
+
+
+@bp.route('/send-message/',methods=["POST"])
+@token_auth.login_required
+@admin_required
+def send_messages():
+    """群发短信"""
+    if g.current_user.get_task_in_process('send_messages'):
+        return bad_request('上一个群发私信的后台任务尚未结束')
+    else:
+        json_data = request.json
+        if not json_data:
+            return bad_request('You must post Json data.')
+        if 'body' not in json_data and not json_data.get('body'):
+            return bad_request({'message':'Body is required'})
+
+        g.current_user.lanuch_tasks('send_messages', '....正在群发短信',kwrags={'user_id': g.current_user.id, 'body': json_data.get('body')})
+        return jsonify(message='正在运行群发私信后台任务')
+
+@bp.route('/users/<int:id>/tasks/',methods=["GET"])
+@token_auth.login_required
+def get_user_tasks_in_progress(id):
+    user = User.query.get_or_404(id)
+    if g.current_user != user:
+        return error_response(403)
+    page = request.args.get('page',1,type=int)
+    per_page = min(request.args.get('per_page',current_app.config['TASKS_PER_PAGE'],type=int),100)
+    data = Task.to_collection_dict(Task.query.filter_by(user_id=user.id,complate=False).all(),page,per_page,endpoint=url_for('api.get_user_tasks_in_progress',id=id))
+
+    return jsonify(data)
